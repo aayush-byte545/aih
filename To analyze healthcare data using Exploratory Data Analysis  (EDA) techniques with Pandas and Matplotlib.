@@ -1,0 +1,161 @@
+
+
+# ============================================
+# 1. IMPORT LIBRARIES
+# ============================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+
+# ============================================
+# 2. LOAD CLEANED DIABETES DATASET
+# ============================================
+
+file_path = Path(__file__).resolve().parent / "diabetes_final_dataset.csv"
+
+df = pd.read_csv(file_path)
+
+print("Dataset loaded successfully!")
+print("Dataset Shape:", df.shape)
+
+# ============================================
+# 3. SELECT DIABETES PATIENTS
+# ============================================
+
+diabetes_df = df[
+    df["Condition"].astype(str).str.strip().str.lower() == "diabetes"
+].copy()
+
+print("\nDiabetes Dataset Head:")
+print(diabetes_df.head())
+
+print("\nDataset Info:")
+diabetes_df.info()
+
+print("\nDescriptive Statistics:")
+print(diabetes_df.describe())
+
+print("\nMissing Values:")
+print(diabetes_df.isnull().sum())
+
+print("\nDuplicate Records:")
+print(diabetes_df.duplicated().sum())
+
+if diabetes_df.empty:
+    raise ValueError("No Diabetes records found in the dataset.")
+
+# ============================================
+# 4. MATPLOTLIB VISUALIZATION
+# ============================================
+
+plt.figure(figsize=(12, 8))
+
+# 1. Age Distribution
+plt.subplot(2, 2, 1)
+
+plt.hist(diabetes_df["Age"].dropna(), bins=8, edgecolor="black")
+plt.xlabel("Age (scaled values if standardized)")
+plt.ylabel("Count")
+plt.title("Age Distribution of Diabetic Patients")
+
+# 2. Gender Count
+plt.subplot(2, 2, 2)
+
+gender_columns = ["Gender_Male", "Gender_Female"]
+
+if all(col in diabetes_df.columns for col in gender_columns):
+    gender_count = [
+        diabetes_df["Gender_Male"].sum(),
+        diabetes_df["Gender_Female"].sum()
+    ]
+
+    plt.bar(["Male", "Female"], gender_count, edgecolor="black")
+else:
+    # Fallback if Gender was not one-hot encoded
+    gender_count = (
+        diabetes_df["Gender"]
+        .value_counts()
+    )
+
+    plt.bar(
+        gender_count.index.astype(str),
+        gender_count.values,
+        edgecolor="black"
+    )
+
+plt.xlabel("Gender")
+plt.ylabel("Count")
+plt.title("Gender Count of Diabetic Patients")
+
+# 3. Cholesterol Distribution
+plt.subplot(2, 2, 3)
+
+plt.hist(
+    diabetes_df["Cholesterol"].dropna(),
+    bins=8,
+    edgecolor="black"
+)
+plt.xlabel("Cholesterol (scaled values if standardized)")
+plt.ylabel("Count")
+plt.title("Cholesterol Distribution")
+
+# 4. Blood Pressure Distribution
+plt.subplot(2, 2, 4)
+
+bp_data = [
+    diabetes_df["Systolic_BP"].dropna(),
+    diabetes_df["Diastolic_BP"].dropna()
+]
+
+plt.boxplot(
+    bp_data,
+    tick_labels=["Systolic BP", "Diastolic BP"]
+)
+
+plt.ylabel("Blood Pressure (scaled values if standardized)")
+plt.title("Blood Pressure Distribution")
+
+plt.tight_layout()
+plt.show()
+
+# ============================================
+# 5. SEABORN VISUALIZATIONS
+# ============================================
+
+# Age distribution
+plt.figure(figsize=(8, 5))
+sns.histplot(data=diabetes_df, x="Age", bins=8, kde=True)
+plt.title("Age Distribution - Seaborn")
+plt.xlabel("Age (scaled values if standardized)")
+plt.tight_layout()
+plt.show()
+
+# Cholesterol by gender, if gender columns exist
+if all(col in diabetes_df.columns for col in gender_columns):
+    diabetes_df["Gender_Label"] = np.select(
+        [
+            diabetes_df["Gender_Male"].eq(1),
+            diabetes_df["Gender_Female"].eq(1)
+        ],
+        ["Male", "Female"],
+        default="Unknown"
+    )
+
+    plt.figure(figsize=(8, 5))
+    sns.boxplot(
+        data=diabetes_df,
+        x="Gender_Label",
+        y="Cholesterol"
+    )
+    plt.title("Cholesterol Distribution by Gender")
+    plt.xlabel("Gender")
+    plt.ylabel("Cholesterol (scaled values if standardized)")
+    plt.tight_layout()
+    plt.show()
+
+print("\nData analysis and visualization completed successfully!")
+
+plt.show()  
