@@ -1,0 +1,112 @@
+
+# =====================================================
+# MEDICAL NAMED ENTITY RECOGNITION USING spaCy
+# AI for Healthcare Lab
+# =====================================================
+
+# 1. Import Libraries
+
+import spacy
+import pandas as pd
+from pathlib import Path
+
+# =====================================================
+# 2. Load English Language Model
+# =====================================================
+
+try:
+    nlp = spacy.load("en_core_web_sm")
+    print("spaCy English model loaded successfully!")
+
+except OSError:
+    raise OSError(
+        "English language model not found.\n"
+        "Run the following commands in the VS Code terminal:\n"
+        "python -m pip install spacy\n"
+        "python -m spacy download en_core_web_sm"
+    )
+
+# =====================================================
+# 3. Sample Medical Report
+# =====================================================
+
+medical_report = """
+Patient Swayam Raut, aged 21 years, was admitted to
+Jaslok Hospital with complaints of fever and chest pain.
+He was diagnosed with pneumonia and prescribed
+Azithromycin 500 mg for 5 days.
+"""
+
+print("\nMedical Report:")
+print(medical_report)
+
+# =====================================================
+# 4. Process the Medical Report
+# =====================================================
+
+doc = nlp(medical_report)
+
+# =====================================================
+# 5. Extract Named Entities
+# =====================================================
+
+print("\nNamed Entities:")
+print("-" * 40)
+
+entities = []
+
+for ent in doc.ents:
+    print(ent.text, "->", ent.label_)
+
+    entities.append(
+        (ent.text, ent.label_)
+    )
+
+# =====================================================
+# 6. Store Entities in DataFrame
+# =====================================================
+
+df = pd.DataFrame(
+    entities,
+    columns=["Entity", "Entity Type"]
+)
+
+print("\nExtracted Entities DataFrame:")
+print(df)
+
+# =====================================================
+# 7. Save Entities to CSV
+# =====================================================
+
+output_file = (
+    Path(__file__).resolve().parent
+    / "Medical_Entities.csv"
+)
+
+df.to_csv(
+    output_file,
+    index=False
+)
+
+print("\nMedical_Entities.csv saved successfully!")
+print("Saved location:", output_file)
+
+# =====================================================
+# 8. Extract Medical-Specific Terms
+# =====================================================
+
+print("\nMedical Information:")
+print("-" * 40)
+
+medical_terms = [
+    "pneumonia",
+    "Azithromycin",
+    "fever",
+    "chest pain"
+]
+
+for term in medical_terms:
+    if term.lower() in medical_report.lower():
+        print(term)
+
+print("\nMedical NER processing completed successfully!")
