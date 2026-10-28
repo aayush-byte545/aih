@@ -1,0 +1,305 @@
+
+# =====================================================
+# DECISION TREE CLASSIFICATION
+# Healthcare Dataset
+# =====================================================
+
+# 1. Import Libraries
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from pathlib import Path
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    classification_report
+)
+
+# =====================================================
+# 2. Load Dataset
+# =====================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+file_path = BASE_DIR / "healthcare_uncleaned_data.csv"
+
+if not file_path.exists():
+    raise FileNotFoundError(
+        f"Dataset not found: {file_path}\n"
+        "Place healthcare_uncleaned_data.csv in the same folder as exp4.py."
+    )
+
+df = pd.read_csv(file_path)
+
+print("Dataset loaded successfully!")
+print(df.head())
+print("\nDataset Shape:", df.shape)
+
+# =====================================================
+# 3. Clean Column Names and Remove Unnecessary Columns
+# =====================================================
+
+df.columns = df.columns.str.strip()
+
+df = df.drop(
+    ["Patient Name", "Email", "Phone Number"],
+    axis=1,
+    errors="ignore"
+)
+
+# =====================================================
+# 4. Process Blood Pressure
+# =====================================================
+
+bp = (
+    df["Blood Pressure"]
+    .astype("string")
+    .str.strip()
+    .str.split("/", expand=True)
+)
+
+if bp.shape[1] >= 2:
+    df["Systolic_BP"] = pd.to_numeric(
+        bp[0].str.strip(),
+        errors="coerce"
+    ).astype(float)
+
+    df["Diastolic_BP"] = pd.to_numeric(
+        bp[1].str.strip(),
+        errors="coerce"
+    ).astype(float)
+else:
+    df["Systolic_BP"] = np.nan
+    df["Diastolic_BP"] = np.nan
+
+df = df.drop("Blood Pressure", axis=1)
+
+# =====================================================
+# 5. Process Visit Date
+# =====================================================
+
+df["Visit Date"] = pd.to_datetime(
+    df["Visit Date"],
+    errors="coerce"
+)
+
+df["Visit_Year"] = df["Visit Date"].dt.year.astype(float)
+
+df = df.drop("Visit Date", axis=1)
+
+# =====================================================
+# 6. Handle Missing and Invalid Values
+# =====================================================
+
+numeric_cols = [
+    "Age",
+    "Cholesterol",
+    "Systolic_BP",
+    "Diastolic_BP",
+    "Visit_Year"
+]
+
+# Convert every numerical column to float.
+# This allows decimal median values such as 137.5.
+
+for col in numeric_cols:
+    df[col] = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    ).astype(float)
+
+# Replace invalid zero values
+df["Age"] = df["Age"].replace(0, np.nan)
+df["Cholesterol"] = df["Cholesterol"].replace(0, np.nan)
+
+# Fill missing numerical values with their medians
+for col in numeric_cols:
+    median_value = df[col].median()
+
+    if pd.notna(median_value):
+        df[col] = df[col].fillna(float(median_value))
+    else:
+        df[col] = df[col].fillna(0.0)
+
+# Clean categorical columns
+for col in ["Gender", "Condition", "Medication"]:
+    df[col] = df[col].astype("string").str.strip().str.title()
+    df[col] = df[col].fillna("Unknown")
+
+# Remove duplicate records
+df = df.drop_duplicates().copy()
+
+print("\nMissing Values After Cleaning:")
+print(df.isnull().sum())
+
+print("\nDataset Shape After Cleaning:", df.shape)
+
+# =====================================================
+# 7. Create Target Variable
+# =====================================================
+
+# Outcome = 1 when cholesterol >= 200
+# Outcome = 0 when cholesterol < 200
+
+df["Outcome"] = np.where(
+    df["Cholesterol"] >= 200,
+    1,
+    0
+)
+
+print("\nOutcome Distribution:")
+print(df["Outcome"].value_counts())
+
+if df["Outcome"].nunique() < 2:
+    raise ValueError(
+        "The target has only one class. "
+        "Classification requires at least two classes."
+    )
+
+# =====================================================
+# 8. Encode Categorical Variables
+# =====================================================
+
+df = pd.get_dummies(
+    df,
+    columns=["Gender", "Condition", "Medication"],
+    drop_first=True,
+    dtype=int
+)
+
+# =====================================================
+# 9. Separate Features and Target
+# =====================================================
+
+# Cholesterol is excluded because it was used to create Outcome.
+
+X = df.drop(
+    ["Outcome", "Cholesterol"],
+    axis=1
+)
+
+y = df["Outcome"]
+
+# Keep numerical features only
+X = X.select_dtypes(include=[np.number])
+
+print("\nFeatures Used:")
+print(X.columns.tolist())
+
+# =====================================================
+# 10. Train-Test Split
+# =====================================================
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
+
+print("\nTraining Data:", X_train.shape)
+print("Testing Data:", X_test.shape)
+
+# =====================================================
+# 11. Train Decision Tree Classifier
+# =====================================================
+
+model = DecisionTreeClassifier(
+    random_state=42,
+    max_depth=5
+)
+
+model.fit(X_train, y_train)
+
+# Predict test data
+y_pred = model.predict(X_test)
+
+# =====================================================
+# 12. Evaluate Model
+# =====================================================
+
+accuracy = accuracy_score(y_test, y_pred)
+
+precision = precision_score(
+    y_test,
+    y_pred,
+    zero_division=0
+)
+
+recall = recall_score(
+    y_test,
+    y_pred,
+    zero_division=0
+)
+
+f1 = f1_score(
+    y_test,
+    y_pred,
+    zero_division=0
+)
+
+print("\n========== Evaluation Metrics ==========")
+print("Accuracy :", round(accuracy, 4))
+print("Precision:", round(precision, 4))
+print("Recall   :", round(recall, 4))
+print("F1 Score :", round(f1, 4))
+
+# =====================================================
+# 13. Classification Report
+# =====================================================
+
+print("\nClassification Report:")
+
+print(
+    classification_report(
+        y_test,
+        y_pred,
+        labels=[0, 1],
+        target_names=["Normal", "High"],
+        zero_division=0
+    )
+)
+
+# =====================================================
+# 14. Confusion Matrix
+# =====================================================
+
+cm = confusion_matrix(
+    y_test,
+    y_pred,
+    labels=[0, 1]
+)
+
+print("\nConfusion Matrix:")
+print(cm)
+
+plt.figure(figsize=(6, 5))
+
+sns.heatmap(
+    cm,
+    annot=True,
+    fmt="d",
+    cmap="Blues",
+    xticklabels=["Normal", "High"],
+    yticklabels=["Normal", "High"]
+)
+
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Decision Tree Confusion Matrix")
+plt.tight_layout()
+plt.show()
+
+# =====================================================
+# 15. Completion Message
+# =====================================================
+
+print("\nDecision Tree Classification Completed Successfully!")
