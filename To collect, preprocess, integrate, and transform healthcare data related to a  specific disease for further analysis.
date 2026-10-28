@@ -1,0 +1,309 @@
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from sklearn.preprocessing import StandardScaler
+
+# =====================================================
+# 1. LOAD DATASET
+# =====================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+input_file = BASE_DIR / "healthcare_uncleaned_data.csv"
+
+if not input_file.exists():
+    raise FileNotFoundError(
+        f"Dataset not found: {input_file}\n"
+        "Place healthcare_uncleaned_data.csv in the same folder as exp1.py."
+    )
+
+df = pd.read_csv(input_file)
+
+print("Dataset loaded successfully!")
+print("Initial Shape:", df.shape)
+
+# Check required columns
+required_columns = [
+    "Patient Name",
+    "Age",
+    "Gender",
+    "Email",
+    "Condition",
+    "Medication",
+    "Visit Date",
+    "Blood Pressure",
+    "Cholesterol"
+]
+
+missing_columns = [
+    col for col in required_columns if col not in df.columns
+]
+
+if missing_columns:
+    raise ValueError(f"Missing columns: {missing_columns}")
+
+# =====================================================
+# 2. INSPECT DATASET
+# =====================================================
+
+print("\nFirst 5 Records:")
+print(df.head())
+
+print("\nMissing Values:")
+print(df.isnull().sum())
+
+print("\nDuplicate Records:")
+print(df.duplicated().sum())
+
+# =====================================================
+# 3. DATA CLEANING
+# =====================================================
+
+text_cols = [
+    "Patient Name",
+    "Gender",
+    "Condition",
+    "Medication",
+    "Email"
+]
+
+# Clean text columns
+for col in text_cols:
+    df[col] = df[col].astype("string").str.strip()
+
+# Standardize capitalization
+for col in ["Patient Name", "Gender", "Condition", "Medication"]:
+    df[col] = df[col].str.title()
+
+# Standardize email addresses
+df["Email"] = df["Email"].str.lower()
+
+# Convert numerical columns to numeric values
+df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
+df["Cholesterol"] = pd.to_numeric(
+    df["Cholesterol"], errors="coerce"
+)
+
+# Replace invalid zero values with missing values
+df["Age"] = df["Age"].replace(0, np.nan)
+df["Cholesterol"] = df["Cholesterol"].replace(0, np.nan)
+
+# Fill missing numerical values with their medians
+for col in ["Age", "Cholesterol"]:
+    median_value = df[col].median()
+
+    if pd.notna(median_value):
+        df[col] = df[col].fillna(median_value)
+
+# Standardize missing and unknown gender values
+df["Gender"] = df["Gender"].replace(
+    ["Other", "None", "Nan", "NA", "N/A", ""],
+    "Unknown"
+)
+
+df["Gender"] = df["Gender"].fillna("Unknown")
+
+# Convert Visit Date to datetime
+df["Visit Date"] = pd.to_datetime(
+    df["Visit Date"],
+    errors="coerce"
+)
+
+# Remove records with invalid dates
+df = df.dropna(subset=["Visit Date"]).copy()
+
+# Remove duplicate records
+df = df.drop_duplicates().copy()
+
+print("\nAfter Cleaning:")
+print("Shape:", df.shape)
+print("\nCleaned Records:")
+print(df.head())
+
+# =====================================================
+# 4. SELECT DIABETES RECORDS
+# =====================================================
+
+disease_cohort = df[
+    df["Condition"] == "Diabetes"
+].copy()
+
+print("\nDiabetes Dataset:")
+print("Number of records:", len(disease_cohort))
+print(disease_cohort.head())
+
+if disease_cohort.empty:
+    raise ValueError(
+        "No Diabetes records found. Check the Condition column."
+    )
+
+# =====================================================
+# 5. DATA INTEGRATION
+# =====================================================
+
+# Select patient information
+patient_data = disease_cohort[
+    ["Patient Name", "Age", "Gender", "Email"]
+].copy()
+
+# Select clinical information
+clinical_data = disease_cohort[
+    [
+        "Condition",
+        "Medication",
+        "Visit Date",
+        "Blood Pressure",
+        "Cholesterol"
+    ]
+].copy()
+
+# Create row identifiers to combine corresponding rows
+# These are generated row IDs, not actual patient IDs.
+patient_data["Patient_ID"] = range(
+    1, len(patient_data) + 1
+)
+
+clinical_data["Patient_ID"] = range(
+    1, len(clinical_data) + 1
+)
+
+# Merge both datasets
+integrated_data = pd.merge(
+    patient_data,
+    clinical_data,
+    on="Patient_ID",
+    how="inner",
+    validate="one_to_one"
+)
+
+print("\nIntegrated Data:")
+print(integrated_data.head())
+
+# =====================================================
+# 6. DATA TRANSFORMATION
+# =====================================================
+
+# Split Blood Pressure into systolic and diastolic values
+bp = (
+    integrated_data["Blood Pressure"]
+    .astype("string")
+    .str.strip()
+    .str.split("/", expand=True)
+)
+
+if bp.shape[1] >= 2:
+    integrated_data["Systolic_BP"] = pd.to_numeric(
+        bp[0].str.strip(),
+        errors="coerce"
+    )
+
+    integrated_data["Diastolic_BP"] = pd.to_numeric(
+        bp[1].str.strip(),
+        errors="coerce"
+    )
+else:
+    integrated_data["Systolic_BP"] = np.nan
+    integrated_data["Diastolic_BP"] = np.nan
+
+# Fill missing blood pressure values with medians
+for col in ["Systolic_BP", "Diastolic_BP"]:
+    median_value = integrated_data[col].median()
+
+    if pd.notna(median_value):
+        integrated_data[col] = integrated_data[col].fillna(
+            median_value
+        )
+
+# Create age groups
+integrated_data["Age_Group"] = pd.cut(
+    integrated_data["Age"],
+    bins=[0, 18, 35, 50, 65, 100],
+    labels=[
+        "Minor",
+        "Young Adult",
+        "Middle Aged",
+        "Senior",
+        "Geriatric"
+    ],
+    include_lowest=True
+)
+
+# Extract year and month
+integrated_data["Visit_Year"] = (
+    integrated_data["Visit Date"].dt.year
+)
+
+integrated_data["Visit_Month"] = (
+    integrated_data["Visit Date"].dt.month
+)
+
+print("\nTransformed Data:")
+print(integrated_data.head())
+
+# =====================================================
+# 7. ENCODING
+# =====================================================
+
+integrated_data = pd.get_dummies(
+    integrated_data,
+    columns=["Gender", "Medication", "Age_Group"],
+    dtype=int
+)
+
+print("\nCategorical Encoding Completed!")
+
+# =====================================================
+# 8. FEATURE SCALING
+# =====================================================
+
+scaler = StandardScaler()
+
+scale_columns = [
+    "Age",
+    "Cholesterol",
+    "Systolic_BP",
+    "Diastolic_BP"
+]
+
+# Scale only columns that contain valid numerical data
+for col in scale_columns:
+    integrated_data[col] = pd.to_numeric(
+        integrated_data[col], errors="coerce"
+    )
+
+valid_scale_columns = [
+    col for col in scale_columns
+    if integrated_data[col].notna().all()
+]
+
+if valid_scale_columns:
+    integrated_data[valid_scale_columns] = scaler.fit_transform(
+        integrated_data[valid_scale_columns]
+    )
+
+print("Feature Scaling Completed!")
+
+# =====================================================
+# 9. FINAL DATASET
+# =====================================================
+
+print("\nFinal ML-Ready Dataset:")
+print(integrated_data.head())
+
+print("\nFinal Shape:", integrated_data.shape)
+print("\nFinal Columns:")
+print(integrated_data.columns.tolist())
+
+# =====================================================
+# 10. SAVE DATASET
+# =====================================================
+
+output_file = BASE_DIR / "diabetes_final_dataset.csv"
+
+integrated_data.to_csv(
+    output_file,
+    index=False
+)
+
+print("\nFinal dataset saved successfully!")
+print("Saved location:", output_file)
