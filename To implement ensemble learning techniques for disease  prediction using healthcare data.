@@ -1,0 +1,463 @@
+
+# ============================================================
+# HEALTHCARE DISEASE CLASSIFICATION USING ENSEMBLE LEARNING
+# Logistic Regression, Decision Tree, SVM, Voting, Random Forest
+# ============================================================
+
+# 1. Import Required Libraries
+
+import pandas as pd
+import numpy as np
+
+from pathlib import Path
+
+from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import VotingClassifier, RandomForestClassifier
+
+from sklearn.metrics import accuracy_score, classification_report
+
+
+# ============================================================
+# 2. LOAD DATASET
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+file_path = BASE_DIR / "healthcare_uncleaned_data.csv"
+
+if not file_path.exists():
+    raise FileNotFoundError(
+        f"Dataset not found: {file_path}\n"
+        "Place healthcare_uncleaned_data.csv in the same folder as exp5.py."
+    )
+
+df = pd.read_csv(file_path)
+
+print("Dataset loaded successfully!")
+print("Dataset Shape:", df.shape)
+
+print("\nFirst 5 Records:")
+print(df.head())
+
+
+# ============================================================
+# 3. CLEAN COLUMN NAMES
+# ============================================================
+
+df.columns = df.columns.str.strip()
+
+required_columns = [
+    "Age",
+    "Gender",
+    "Condition",
+    "Medication",
+    "Visit Date",
+    "Blood Pressure",
+    "Cholesterol"
+]
+
+missing_columns = [
+    col for col in required_columns if col not in df.columns
+]
+
+if missing_columns:
+    raise ValueError(f"Missing required columns: {missing_columns}")
+
+# Remove unnecessary personal information
+df = df.drop(
+    ["Patient Name", "Email", "Phone Number"],
+    axis=1,
+    errors="ignore"
+)
+
+
+# ============================================================
+# 4. PROCESS BLOOD PRESSURE
+# ============================================================
+
+bp = (
+    df["Blood Pressure"]
+    .astype("string")
+    .str.strip()
+    .str.split("/", expand=True)
+)
+
+if bp.shape[1] >= 2:
+    df["Systolic_BP"] = pd.to_numeric(
+        bp[0].str.strip(),
+        errors="coerce"
+    )
+
+    df["Diastolic_BP"] = pd.to_numeric(
+        bp[1].str.strip(),
+        errors="coerce"
+    )
+else:
+    df["Systolic_BP"] = np.nan
+    df["Diastolic_BP"] = np.nan
+
+df = df.drop("Blood Pressure", axis=1)
+
+
+# ============================================================
+# 5. PROCESS VISIT DATE
+# ============================================================
+
+df["Visit Date"] = pd.to_datetime(
+    df["Visit Date"],
+    errors="coerce"
+)
+
+df["Visit_Year"] = df["Visit Date"].dt.year
+
+df = df.drop("Visit Date", axis=1)
+
+
+# ============================================================
+# 6. HANDLE INVALID VALUES
+# ============================================================
+
+# Convert numeric columns to numeric types
+numeric_features = [
+    "Age",
+    "Cholesterol",
+    "Systolic_BP",
+    "Diastolic_BP",
+    "Visit_Year"
+]
+
+for col in numeric_features:
+    df[col] = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    ).astype(float)
+
+# Treat zero Age and Cholesterol values as missing
+df["Age"] = df["Age"].replace(0, np.nan)
+
+df["Cholesterol"] = df["Cholesterol"].replace(
+    0, np.nan
+)
+
+# Clean categorical columns
+categorical_features = [
+    "Gender",
+    "Medication"
+]
+
+for col in categorical_features:
+    df[col] = (
+        df[col]
+        .astype("string")
+        .str.strip()
+        .str.title()
+    )
+
+    df[col] = df[col].replace("", pd.NA)
+
+# Remove rows with missing target labels
+df["Condition"] = (
+    df["Condition"]
+    .astype("string")
+    .str.strip()
+    .str.title()
+)
+
+df = df.dropna(subset=["Condition"]).copy()
+
+print("\nMissing Values Before Preprocessing:")
+print(df.isnull().sum())
+
+
+# ============================================================
+# 7. DEFINE FEATURES AND TARGET
+# ============================================================
+
+# Target: Condition (Diabetes, Hypertension, Asthma, etc.)
+
+X = df.drop("Condition", axis=1)
+
+y = df["Condition"]
+
+print("\nDisease Classes:")
+print(y.value_counts())
+
+print("\nFeatures:")
+print(X.columns.tolist())
+
+
+# ============================================================
+# 8. PREPROCESSING PIPELINES
+# ============================================================
+
+# Numerical preprocessing:
+# 1. Fill missing values with the median
+# 2. Standardize numerical features
+
+numeric_transformer = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ]
+)
+
+# Categorical preprocessing:
+# 1. Fill missing values with the most frequent value
+# 2. Convert categories into numerical features
+
+categorical_transformer = Pipeline(
+    steps=[
+        (
+            "imputer",
+            SimpleImputer(strategy="most_frequent")
+        ),
+        (
+            "encoder",
+            OneHotEncoder(handle_unknown="ignore")
+        )
+    ]
+)
+
+# Combine numerical and categorical preprocessing
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        (
+            "num",
+            numeric_transformer,
+            numeric_features
+        ),
+        (
+            "cat",
+            categorical_transformer,
+            categorical_features
+        )
+    ]
+)
+
+
+# ============================================================
+# 9. TRAIN-TEST SPLIT
+# ============================================================
+
+# Stratification requires at least two records per class.
+# The supplied sample dataset contains rare classes, so use
+# stratification only when the dataset supports it.
+
+class_counts = y.value_counts()
+
+test_count = int(np.ceil(len(y) * 0.20))
+train_count = len(y) - test_count
+
+can_stratify = (
+    class_counts.min() >= 2
+    and test_count >= y.nunique()
+    and train_count >= y.nunique()
+)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y if can_stratify else None
+)
+
+print("\nTraining Samples:", len(X_train))
+print("Testing Samples:", len(X_test))
+
+if not can_stratify:
+    print(
+        "Note: Stratification was skipped because some disease "
+        "classes have too few records."
+    )
+
+
+# ============================================================
+# 10. DEFINE INDIVIDUAL MODELS
+# ============================================================
+
+model1 = LogisticRegression(
+    max_iter=1000,
+    random_state=42
+)
+
+model2 = DecisionTreeClassifier(
+    random_state=42,
+    max_depth=5
+)
+
+model3 = SVC(
+    probability=True,
+    random_state=42
+)
+
+
+# ============================================================
+# 11. CREATE MODEL PIPELINES
+# ============================================================
+
+lr_model = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("classifier", model1)
+    ]
+)
+
+dt_model = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("classifier", model2)
+    ]
+)
+
+svm_model = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("classifier", model3)
+    ]
+)
+
+
+# ============================================================
+# 12. EVALUATE INDIVIDUAL MODELS
+# ============================================================
+
+print("\nIndividual Model Accuracies")
+print("-" * 45)
+
+individual_models = [
+    (lr_model, "Logistic Regression"),
+    (dt_model, "Decision Tree"),
+    (svm_model, "SVM")
+]
+
+results = {}
+
+for model, name in individual_models:
+
+    model.fit(X_train, y_train)
+
+    predictions = model.predict(X_test)
+
+    accuracy = accuracy_score(
+        y_test,
+        predictions
+    )
+
+    results[name] = accuracy
+
+    print(
+        f"Accuracy of {name}: {accuracy:.4f}"
+    )
+
+
+# ============================================================
+# 13. VOTING CLASSIFIER ENSEMBLE
+# ============================================================
+
+ensemble_voting = VotingClassifier(
+    estimators=[
+        ("lr", lr_model),
+        ("dt", dt_model),
+        ("svm", svm_model)
+    ],
+    voting="hard"
+)
+
+ensemble_voting.fit(
+    X_train,
+    y_train
+)
+
+voting_predictions = ensemble_voting.predict(
+    X_test
+)
+
+voting_accuracy = accuracy_score(
+    y_test,
+    voting_predictions
+)
+
+results["Voting Ensemble"] = voting_accuracy
+
+print("-" * 45)
+
+print(
+    f"Accuracy of Voting Ensemble: {voting_accuracy:.4f}"
+)
+
+
+# ============================================================
+# 14. RANDOM FOREST ENSEMBLE
+# ============================================================
+
+rf_model = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        (
+            "classifier",
+            RandomForestClassifier(
+                n_estimators=100,
+                random_state=42,
+                class_weight="balanced"
+            )
+        )
+    ]
+)
+
+rf_model.fit(
+    X_train,
+    y_train
+)
+
+rf_predictions = rf_model.predict(
+    X_test
+)
+
+rf_accuracy = accuracy_score(
+    y_test,
+    rf_predictions
+)
+
+results["Random Forest"] = rf_accuracy
+
+print(
+    f"Accuracy of Random Forest: {rf_accuracy:.4f}"
+)
+
+
+# ============================================================
+# 15. CLASSIFICATION REPORT
+# ============================================================
+
+print("\nRandom Forest Classification Report")
+print("-" * 45)
+
+print(
+    classification_report(
+        y_test,
+        rf_predictions,
+        zero_division=0
+    )
+)
+
+
+# ============================================================
+# 16. COMPARE MODEL ACCURACIES
+# ============================================================
+
+print("\nModel Accuracy Comparison")
+print("-" * 45)
+
+for model_name, accuracy in results.items():
+    print(f"{model_name:<25}: {accuracy:.4f}")
+
+print("\nEnsemble Learning Completed Successfully!")
