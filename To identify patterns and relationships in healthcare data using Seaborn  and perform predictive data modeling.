@@ -1,0 +1,255 @@
+
+# =====================================================
+# 1. IMPORT LIBRARIES
+# =====================================================
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix
+)
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+# =====================================================
+# 2. LOAD THE SAME DATASET
+# =====================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+file_path = BASE_DIR / "healthcare_uncleaned_data.csv"
+
+df = pd.read_csv(file_path)
+
+print("Dataset loaded successfully!")
+print("Initial Shape:", df.shape)
+
+# =====================================================
+# 3. CLEAN DATA
+# =====================================================
+
+for col in [
+    "Patient Name", "Gender", "Condition",
+    "Medication", "Email"
+]:
+    df[col] = df[col].astype("string").str.strip()
+
+for col in ["Gender", "Condition", "Medication"]:
+    df[col] = df[col].str.title()
+
+df["Email"] = df["Email"].str.lower()
+
+# Convert numerical columns
+for col in ["Age", "Cholesterol"]:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df["Age"] = df["Age"].replace(0, np.nan)
+df["Cholesterol"] = df["Cholesterol"].replace(0, np.nan)
+
+# Convert dates
+df["Visit Date"] = pd.to_datetime(
+    df["Visit Date"], errors="coerce"
+)
+
+df = df.dropna(subset=["Visit Date"]).drop_duplicates().copy()
+
+# Clean gender categories
+df["Gender"] = df["Gender"].replace({
+    "Other": "Unknown",
+    "None": "Unknown",
+    "Nan": "Unknown"
+}).fillna("Unknown")
+
+# Convert blood pressure into two numerical columns
+bp = (
+    df["Blood Pressure"]
+    .astype("string")
+    .str.strip()
+    .str.split("/", expand=True)
+)
+
+if bp.shape[1] >= 2:
+    df["Systolic_BP"] = pd.to_numeric(
+        bp[0].str.strip(), errors="coerce"
+    )
+    df["Diastolic_BP"] = pd.to_numeric(
+        bp[1].str.strip(), errors="coerce"
+    )
+else:
+    df["Systolic_BP"] = np.nan
+    df["Diastolic_BP"] = np.nan
+
+# =====================================================
+# 4. SELECT DIABETES RECORDS
+# =====================================================
+
+diabetes_df = df[
+    df["Condition"] == "Diabetes"
+].copy()
+
+print("\nDiabetes Dataset:")
+print(diabetes_df.head())
+
+print("\nDataset Information:")
+diabetes_df.info()
+
+print("\nNumber of Diabetes Records:", len(diabetes_df))
+
+if diabetes_df.empty:
+    raise ValueError("No Diabetes records found.")
+
+# =====================================================
+# 5. SEABORN EXPLORATORY DATA ANALYSIS
+# =====================================================
+
+plt.figure(figsize=(12, 8))
+
+# Age Distribution
+plt.subplot(2, 2, 1)
+sns.histplot(data=diabetes_df, x="Age", kde=True)
+plt.title("Age Distribution")
+plt.xlabel("Age")
+plt.ylabel("Count")
+
+# Cholesterol Distribution
+plt.subplot(2, 2, 2)
+sns.boxplot(x=diabetes_df["Cholesterol"])
+plt.title("Cholesterol Distribution")
+plt.xlabel("Cholesterol")
+
+# Age vs Cholesterol
+plt.subplot(2, 2, 3)
+sns.scatterplot(
+    x="Age",
+    y="Cholesterol",
+    data=diabetes_df
+)
+plt.title("Age vs Cholesterol")
+plt.xlabel("Age")
+plt.ylabel("Cholesterol")
+
+# Correlation Heatmap
+plt.subplot(2, 2, 4)
+
+features = [
+    "Age",
+    "Cholesterol",
+    "Systolic_BP",
+    "Diastolic_BP"
+]
+
+sns.heatmap(
+    diabetes_df[features].corr(),
+    annot=True,
+    cmap="viridis",
+    fmt=".2f"
+)
+
+plt.title("Correlation Heatmap")
+plt.tight_layout()
+plt.show()
+
+# =====================================================
+# 6. PREPARE FEATURES AND TARGET
+# =====================================================
+
+# Target: predict gender, as in the original experiment
+# 1 = Male, 0 = Female
+# Unknown gender records are excluded.
+
+model_df = diabetes_df[
+    diabetes_df["Gender"].isin(["Male", "Female"])
+].copy()
+
+X = model_df[
+    ["Age", "Cholesterol", "Systolic_BP", "Diastolic_BP"]
+]
+
+y = (model_df["Gender"] == "Male").astype(int)
+
+print("\nTarget Distribution:")
+print(y.value_counts())
+
+if y.nunique() < 2:
+    raise ValueError(
+        "Gender classification requires both Male and Female records."
+    )
+
+# Stratification keeps the gender proportions similar in both sets.
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    random_state=42,
+    stratify=y
+)
+
+print("\nTraining Data:", X_train.shape)
+print("Testing Data:", X_test.shape)
+
+# =====================================================
+# 7. LOGISTIC REGRESSION
+# =====================================================
+
+# Impute missing values and scale features using training data only.
+model = make_pipeline(
+    SimpleImputer(strategy="median"),
+    StandardScaler(),
+    LogisticRegression(max_iter=1000, random_state=42)
+)
+
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+# =====================================================
+# 8. MODEL EVALUATION
+# =====================================================
+
+accuracy = accuracy_score(y_test, y_pred)
+
+print("\nModel Accuracy:", round(accuracy * 100, 2), "%")
+
+print("\nClassification Report:")
+print(
+    classification_report(
+        y_test,
+        y_pred,
+        labels=[0, 1],
+        target_names=["Female", "Male"],
+        zero_division=0
+    )
+)
+
+# =====================================================
+# 9. CONFUSION MATRIX
+# =====================================================
+
+cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
+
+plt.figure(figsize=(5, 4))
+
+sns.heatmap(
+    cm,
+    annot=True,
+    fmt="d",
+    cmap="Greens",
+    xticklabels=["Female", "Male"],
+    yticklabels=["Female", "Male"]
+)
+
+plt.xlabel("Predicted Gender")
+plt.ylabel("Actual Gender")
+plt.title("Logistic Regression Confusion Matrix")
+plt.tight_layout()
+plt.show()
+
+print("\nEDA and Logistic Regression completed successfully!")
